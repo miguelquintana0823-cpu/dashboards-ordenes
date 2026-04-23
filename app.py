@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 
 # 1. Configuración de página
-st.set_page_config(page_title="Executive Dashboard V6", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Executive Dashboard", page_icon="📊", layout="wide")
 st.markdown("""
     <style>
     [data-testid="stMetricValue"] { font-size: 24px; }
@@ -33,7 +33,7 @@ df_f = df[df['SQUAD'].isin(squad_filtro)]
 
 marcas_clave_lista = ["Mcdonald's", "Grido", "Mostaza", "Rapanui", "Burger King", "Kfc", "Mcdonald´s Turbo", "SushiPop", "Nicolo", "Dean & Dennys"]
 
-# --- FUNCIÓN MEJORADA: COMPARATIVA + VARIACIÓN ---
+# --- FUNCIÓN: COMPARATIVA + VARIACIÓN ---
 def crear_tabla_con_crecimiento(df_input, index_col):
     resumen = df_input.groupby([index_col, 'Mes_Nombre']).agg({
         'ORDENES': 'sum',
@@ -55,8 +55,8 @@ def crear_tabla_con_crecimiento(df_input, index_col):
         resumen = resumen[cols_finales]
     return resumen
 
-# --- FUNCIONES DE ESTILO (A prueba de versiones nuevas) ---
-def aplicar_estilos(tabla_df, es_marca=False):
+# --- FUNCIÓN DE ESTILO (LIMPIA SIN FONDO) ---
+def aplicar_estilos(tabla_df):
     # Formatear: añadir "%" a la variación y "$ o normal" al resto
     formatos = {}
     cols_var = []
@@ -69,27 +69,18 @@ def aplicar_estilos(tabla_df, es_marca=False):
             
     styler = tabla_df.style.format(formatos)
     
-    # Colorear números (Rojo si cae, Verde si sube)
+    # Colorear solo el texto (Rojo si cae, Verde si sube)
     def color_texto(val):
         if isinstance(val, (int, float)):
             if val < 0: return 'color: #d32f2f' # Rojo
             elif val > 0: return 'color: #388e3c' # Verde
         return ''
-    
-    def color_fondo(val):
-        if isinstance(val, (int, float)):
-            if val < 0: return 'background-color: #ffebee; color: #c62828'
-            elif val > 0: return 'background-color: #e8f5e9; color: #2e7d32'
-        return ''
 
-    # Usar .map() (Pandas Nuevo) o .applymap() (Pandas Viejo) para no romper la web
+    # Compatibilidad Streamlit
     funcion_map = getattr(styler, "map", getattr(styler, "applymap", None))
     
     if cols_var and funcion_map:
-        if es_marca:
-            styler = funcion_map(color_fondo, subset=cols_var)
-        else:
-            styler = funcion_map(color_texto, subset=cols_var)
+        styler = funcion_map(color_texto, subset=cols_var)
             
     return styler
 
@@ -124,7 +115,7 @@ st.table(t1.style.format("{:,.2f}"))
 # ==========================================
 st.subheader("🎯 Tabla 2: Desempeño por Freq Tier con Variación %")
 t_tier = crear_tabla_con_crecimiento(df_f, 'FREQ_TIER')
-st.dataframe(aplicar_estilos(t_tier, es_marca=False), use_container_width=True)
+st.dataframe(aplicar_estilos(t_tier), use_container_width=True)
 
 st.divider()
 
@@ -134,7 +125,7 @@ st.divider()
 st.subheader("🏆 Tabla 3: Marcas Clave - Comparativa de Crecimiento")
 df_mc = df_f[df_f['BRAND_NAME'].isin(marcas_clave_lista)]
 t_mc = crear_tabla_con_crecimiento(df_mc, 'BRAND_NAME')
-st.dataframe(aplicar_estilos(t_mc, es_marca=True), use_container_width=True)
+st.dataframe(aplicar_estilos(t_mc), use_container_width=True)
 
 st.divider()
 
@@ -154,7 +145,6 @@ with col_a:
 
 with col_b:
     try:
-        # Busca cuál marca creció más en órdenes
         max_crec_marca = t_mc.xs('Var %', level=1, axis=1)['ORDENES'].idxmax()
         val_crec_marca = t_mc.xs('Var %', level=1, axis=1)['ORDENES'].max()
         st.warning(f"""
