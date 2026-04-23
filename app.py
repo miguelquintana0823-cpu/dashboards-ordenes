@@ -23,7 +23,7 @@ def load_data_targets():
         df_t = pd.read_csv('ORDENES_TARGET_ZONAS_AR.csv') 
         df_t.columns = [c.strip().upper() for c in df_t.columns]
         
-        # Limpieza de caracteres especiales para cálculos
+        # Limpieza de caracteres especiales para cálculos ($ y %)
         for col in df_t.columns:
             if col not in ['SQUAD', 'ZONA', 'BRAND_NAME']:
                 if df_t[col].dtype == object:
@@ -61,6 +61,7 @@ tab1, tab2 = st.tabs(["📉 Desempeño Marzo-Abril", "🎯 Targets por Zona"])
 # PESTAÑA 1: MARZO - ABRIL
 # ------------------------------------------
 with tab1:
+    st.title("📊 Análisis de Crecimiento: Marzo vs Abril")
     squad_f1 = st.multiselect("Filtrar Squad (Pestaña 1)", options=df1['SQUAD'].unique(), default=df1['SQUAD'].unique(), key="f1")
     df1_f = df1[df1['SQUAD'].isin(squad_f1)]
     
@@ -71,7 +72,6 @@ with tab1:
     total_abr = df_abr['ORDENES'].sum() if not df_abr.empty else 0
     crecimiento = ((total_abr - total_mar) / total_mar * 100) if total_mar > 0 else 0
 
-    st.title("📊 Análisis de Crecimiento: Marzo vs Abril")
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("🌱 Órd. Orgánicas (Abril)", f"{df_abr[df_abr['TIPO'] == 'ORG']['ORDENES'].sum():,.0f}")
     k2.metric("💰 Órd. Inorgánicas (Abril)", f"{df_abr[df_abr['TIPO'] == 'INORG']['ORDENES'].sum():,.0f}")
@@ -83,7 +83,6 @@ with tab1:
     t1 = df1_f.groupby('Mes_Nombre').agg({'ORDENES': 'sum', 'SPEND_TOTAL': 'sum', 'SPEND_RESTAURANTES': 'sum', 'SPEND_REACTIVACION': 'sum'}).reindex(['Marzo', 'Abril']).fillna(0)
     st.table(t1.style.format("{:,.2f}"))
 
-    st.subheader("🎯 Tabla 2: Desempeño por Freq Tier")
     def crear_t(df_i, idx):
         res = df_i.groupby([idx, 'Mes_Nombre']).agg({'ORDENES': 'sum', 'SPEND_TOTAL': 'sum', 'SPEND_RESTAURANTES': 'sum', 'SPEND_REACTIVACION': 'sum'}).unstack(fill_value=0)
         if 'Marzo' in res.columns.levels[1] and 'Abril' in res.columns.levels[1]:
@@ -95,22 +94,21 @@ with tab1:
             res = res[cols]
         return res
 
+    st.subheader("🎯 Tabla 2: Desempeño por Freq Tier")
     st.dataframe(aplicar_estilos_p1(crear_t(df1_f, 'FREQ_TIER')), use_container_width=True)
-
-    st.divider()
     st.subheader("🏆 Tabla 3: Marcas Clave")
     marcas_clave_lista = ["Mcdonald's", "Grido", "Mostaza", "Rapanui", "Burger King", "Kfc", "Mcdonald´s Turbo", "SushiPop", "Nicolo", "Dean & Dennys"]
     df_mc = df1_f[df1_f['BRAND_NAME'].isin(marcas_clave_lista)]
     st.dataframe(aplicar_estilos_p1(crear_t(df_mc, 'BRAND_NAME')), use_container_width=True)
 
 # ------------------------------------------
-# PESTAÑA 2: TARGETS POR ZONA (AJUSTADA)
+# PESTAÑA 2: TARGETS POR ZONA (CON CONVERSIÓN)
 # ------------------------------------------
 with tab2:
-    st.title("🎯 Control de Objetivos y Targets")
+    st.title("🎯 Control de Objetivos y Conversión por Zona")
     
     if df2.empty:
-        st.warning("⚠️ No se pudo leer la data. Asegúrate de haber subido 'ORDENES_TARGET_ZONAS_AR.csv' a GitHub.")
+        st.warning("⚠️ Asegúrate de haber subido 'ORDENES_TARGET_ZONAS_AR.csv'.")
     else:
         col_f1, col_f2 = st.columns(2)
         with col_f1:
@@ -120,41 +118,42 @@ with tab2:
         
         df2_f = df2[(df2['SQUAD'].isin(sel_squad)) & (df2['ZONA'].isin(sel_zona))].copy()
 
+        # Agrupamos las métricas
         cols_numericas = df2_f.select_dtypes(include=[np.number]).columns.tolist()
         tabla_final_t2 = df2_f.groupby(['ZONA', 'SQUAD'])[cols_numericas].sum()
 
-        # Cálculo de cumplimiento
+        # 1. Cálculo de CUMPLIMIENTO (Órdenes vs Target)
         if 'ORDENES_TOTALES' in tabla_final_t2.columns and 'TARGET_ACUM' in tabla_final_t2.columns:
-            target_seguro = tabla_final_t2['TARGET_ACUM'].replace(0, np.nan)
-            tabla_final_t2['CUMPLIMIENTO'] = (tabla_final_t2['ORDENES_TOTALES'] / target_seguro) * 100
+            tabla_final_t2['CUMPLIMIENTO'] = (tabla_final_t2['ORDENES_TOTALES'] / tabla_final_t2['TARGET_ACUM'].replace(0, np.nan)) * 100
 
-        # AJUSTE: Columnas deseadas (Removido PCT_VS_TARGET, Agregado CPO_INORGANICO)
-        columnas_deseadas = ['PESO_PCT', 'ORDENES_TOTALES', 'TARGET_ACUM', 'CUMPLIMIENTO', 'SPEND_LOCAL', 'CPO_REACTIVACION', 'CPO_RESTAURANTES', 'CPO_INORGANICO']
+        # 2. Cálculo de CONVERSIÓN (Órdenes vs Base Usuarios)
+        if 'ORDENES_TOTALES' in tabla_final_t2.columns and 'BASE_USUARIOS' in tabla_final_t2.columns:
+            tabla_final_t2['CONVERSION'] = (tabla_final_t2['ORDENES_TOTALES'] / tabla_final_t2['BASE_USUARIOS'].replace(0, np.nan)) * 100
+
+        # Columnas a mostrar (incluimos BASE_USUARIOS y CONVERSION)
+        columnas_deseadas = ['PESO_PCT', 'BASE_USUARIOS', 'ORDENES_TOTALES', 'TARGET_ACUM', 'CUMPLIMIENTO', 'CONVERSION', 'SPEND_LOCAL', 'CPO_REACTIVACION', 'CPO_RESTAURANTES', 'CPO_INORGANICO']
         cols_finales = [c for c in columnas_deseadas if c in tabla_final_t2.columns]
         tabla_final_t2 = tabla_final_t2[cols_finales]
 
-        def estilo_targets(tabla):
+        def estilo_targets_pro(tabla):
             formatos = {}
             for col in tabla.columns:
-                if any(x in col for x in ['PCT', 'CUMPLIMIENTO']):
-                    formatos[col] = "{:,.2f}%" # Mantiene el símbolo %
+                if any(x in col for x in ['PCT', 'CUMPLIMIENTO', 'CONVERSION']):
+                    formatos[col] = "{:,.2f}%"
                 elif any(x in col for x in ['SPEND', 'CPO']):
-                    formatos[col] = "${:,.2f}" # Mantiene el símbolo $
-                else:
+                    formatos[col] = "${:,.2f}"
+                elif any(x in col for x in ['BASE_USUARIOS', 'ORDENES_TOTALES', 'TARGET_ACUM']):
                     formatos[col] = "{:,.0f}"
-            
-            # Solo formateo de texto, sin color de fondo (semaforo removido)
+                else:
+                    formatos[col] = "{:,.2f}"
             return tabla.style.format(formatos)
 
-        st.subheader("📋 Detalle de Metas por Zona")
-        st.dataframe(estilo_targets(tabla_final_t2), use_container_width=True)
+        st.subheader("📋 Detalle de Metas y Conversión por Zona")
+        st.dataframe(estilo_targets_pro(tabla_final_t2), use_container_width=True)
 
-        if 'ORDENES_TOTALES' in df2_f.columns and 'TARGET_ACUM' in df2_f.columns:
-            st.subheader("📊 Órdenes Reales vs Target Acumulado")
-            fig_t = px.bar(
-                df2_f.groupby('ZONA')[['ORDENES_TOTALES', 'TARGET_ACUM']].sum().reset_index(),
-                x='ZONA', y=['ORDENES_TOTALES', 'TARGET_ACUM'],
-                barmode='group',
-                color_discrete_map={'ORDENES_TOTALES': '#10B981', 'TARGET_ACUM': '#94A3B8'}
-            )
-            st.plotly_chart(fig_t, use_container_width=True)
+        # Gráfico complementario de Conversión
+        if 'CONVERSION' in tabla_final_t2.columns:
+            st.subheader("📊 Ranking de Conversión por Zona (%)")
+            conv_zona = tabla_final_t2.groupby('ZONA')['CONVERSION'].mean().reset_index().sort_values('CONVERSION', ascending=False)
+            fig_conv = px.bar(conv_zona, x='ZONA', y='CONVERSION', text_auto='.2f', color_discrete_sequence=['#636EFA'])
+            st.plotly_chart(fig_conv, use_container_width=True)
