@@ -23,7 +23,15 @@ def load_data_targets():
         df_t = pd.read_csv('ORDENES_TARGET_ZONAS_AR.csv') 
         # Limpiar nombres de columnas
         df_t.columns = [c.strip().upper() for c in df_t.columns]
-        # Limpiar datos de texto
+        
+        # LIMPIEZA ANTICRASH: Convertir columnas con $ o % a números reales
+        for col in df_t.columns:
+            if col not in ['SQUAD', 'ZONA', 'BRAND_NAME']: # No tocar columnas de texto
+                if df_t[col].dtype == object:
+                    # Borrar comas, signos pesos y porcentajes antes de calcular
+                    df_t[col] = df_t[col].astype(str).str.replace(r'[\$,%]', '', regex=True)
+                    df_t[col] = pd.to_numeric(df_t[col], errors='coerce') # Force numeric
+        
         for col in ['SQUAD', 'ZONA']:
             if col in df_t.columns:
                 df_t[col] = df_t[col].astype(str).str.strip()
@@ -34,7 +42,7 @@ def load_data_targets():
 df1 = load_data_principal()
 df2 = load_data_targets()
 
-# --- FUNCIONES DE ESTILO ---
+# --- FUNCIONES DE ESTILO PESTAÑA 1 ---
 def aplicar_estilos_p1(tabla_df):
     formatos = {col: "{:,.2f}%" if "Var %" in str(col) else "{:,.2f}" for col in tabla_df.columns}
     styler = tabla_df.style.format(formatos)
@@ -46,74 +54,130 @@ def aplicar_estilos_p1(tabla_df):
     if f_map: styler = f_map(color_variacion, subset=[c for c in tabla_df.columns if "Var %" in str(c)])
     return styler
 
+def crear_tabla_con_crecimiento(df_input, index_col):
+    resumen = df_input.groupby([index_col, 'Mes_Nombre']).agg({
+        'ORDENES': 'sum', 'SPEND_TOTAL': 'sum', 'SPEND_RESTAURANTES': 'sum', 'SPEND_REACTIVACION': 'sum'
+    }).unstack(fill_value=0)
+    
+    if 'Marzo' in resumen.columns.levels[1] and 'Abril' in resumen.columns.levels[1]:
+        metricas = ['ORDENES', 'SPEND_TOTAL', 'SPEND_RESTAURANTES', 'SPEND_REACTIVACION']
+        for m in metricas:
+            marzo_val = resumen[(m, 'Marzo')]
+            abril_val = resumen[(m, 'Abril')]
+            resumen[(m, 'Var %')] = ((abril_val - marzo_val) / marzo_val * 100).replace([np.inf, -np.inf], 0).fillna(0)
+            
+        cols_finales = []
+        for m in metricas:
+            cols_finales.extend([(m, 'Marzo'), (m, 'Abril'), (m, 'Var %')])
+        resumen = resumen[cols_finales]
+    return resumen
+
 # ==========================================
 # ESTRUCTURA DE PESTAÑAS
 # ==========================================
 tab1, tab2 = st.tabs(["📉 Desempeño Marzo-Abril", "🎯 Targets por Zona"])
 
 # ------------------------------------------
-# PESTAÑA 1 (Sin cambios sustanciales)
+# PESTAÑA 1: ORIGINAL
 # ------------------------------------------
 with tab1:
-    # (Mantiene la lógica que ya teníamos configurada)
+    squad_f1 = st.multiselect("Filtrar Squad (Pestaña 1)", options=df1['SQUAD'].unique(), default=df1['SQUAD'].unique(), key="f1")
+    df1_f = df1[df1['SQUAD'].isin(squad_f1)]
+    
+    df_abr = df1_f[df1_f['Mes_Nombre'] == 'Abril']
+    df_mar = df1_f[df1_f['Mes_Nombre'] == 'Marzo']
+
+    total_mar = df_mar['ORDENES'].sum() if not df_mar.empty else 0
+    total_abr = df_abr['ORDENES'].sum() if not df_abr.empty else 0
+    crecimiento = ((total_abr - total_mar) / total_mar * 100) if total_mar > 0 else 0
+
     st.title("📊 Análisis de Crecimiento: Marzo vs Abril")
-    # ... código de Pestaña 1 ...
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("🌱 Órd. Orgánicas (Abril)", f"{df_abr[df_abr['TIPO'] == 'ORG']['ORDENES'].sum():,.0f}")
+    k2.metric("💰 Órd. Inorgánicas (Abril)", f"{df_abr[df_abr['TIPO'] == 'INORG']['ORDENES'].sum():,.0f}")
+    k3.metric("💸 Spend Reactivación (Abril)", f"${df_abr['SPEND_REACTIVACION'].sum():,.2f}")
+    k4.metric("% Crecimiento Total", f"{crecimiento:.2f}%", delta=f"{crecimiento:.2f}%")
+
+    st.divider()
+
+    st.subheader("📋 Tabla 1: Totales por Mes")
+    t1 = df1_f.groupby('Mes_Nombre').agg({'ORDENES': 'sum', 'SPEND_TOTAL': 'sum', 'SPEND_RESTAURANTES': 'sum', 'SPEND_REACTIVACION': 'sum'}).reindex(['Marzo', 'Abril']).fillna(0)
+    st.table(t1.style.format("{:,.2f}"))
+
+    st.subheader("🎯 Tabla 2: Desempeño por Freq Tier")
+    t_tier = crear_tabla_con_crecimiento(df1_f, 'FREQ_TIER')
+    st.dataframe(aplicar_estilos_p1(t_tier), use_container_width=True)
+
+    st.divider()
+
+    st.subheader("🏆 Tabla 3: Marcas Clave")
+    marcas_clave_lista = ["Mcdonald's", "Grido", "Mostaza", "Rapanui", "Burger King", "Kfc", "Mcdonald´s Turbo", "SushiPop", "Nicolo", "Dean & Dennys"]
+    df_mc = df1_f[df1_f['BRAND_NAME'].isin(marcas_clave_lista)]
+    t_mc = crear_tabla_con_crecimiento(df_mc, 'BRAND_NAME')
+    st.dataframe(aplicar_estilos_p1(t_mc), use_container_width=True)
 
 # ------------------------------------------
-# PESTAÑA 2: TARGETS POR ZONA (ACTUALIZADA)
+# PESTAÑA 2: TARGETS POR ZONA 
 # ------------------------------------------
 with tab2:
     st.title("🎯 Control de Objetivos y Targets")
     
     if df2.empty:
-        st.warning("⚠️ Sube 'ORDENES_TARGET_ZONAS_AR.csv' a GitHub.")
+        st.warning("⚠️ No se pudo leer la data. Asegúrate de haber subido 'ORDENES_TARGET_ZONAS_AR.csv' a GitHub.")
     else:
-        # 1) Filtros desplegables con búsqueda (st.multiselect ya incluye buscador)
         col_f1, col_f2 = st.columns(2)
         with col_f1:
-            sel_squad = st.multiselect("🔍 Buscar y Seleccionar Squad", options=sorted(df2['SQUAD'].unique()), default=df2['SQUAD'].unique(), key="f2_squad_search")
+            sel_squad = st.multiselect("🔍 Buscar y Seleccionar Squad", options=sorted(df2['SQUAD'].dropna().unique()), default=df2['SQUAD'].dropna().unique(), key="f2_squad_search")
         with col_f2:
-            sel_zona = st.multiselect("🔍 Buscar y Seleccionar Zona", options=sorted(df2['ZONA'].unique()), default=df2['ZONA'].unique(), key="f2_zona_search")
+            sel_zona = st.multiselect("🔍 Buscar y Seleccionar Zona", options=sorted(df2['ZONA'].dropna().unique()), default=df2['ZONA'].dropna().unique(), key="f2_zona_search")
         
-        # Aplicar filtros
         df2_f = df2[(df2['SQUAD'].isin(sel_squad)) & (df2['ZONA'].isin(sel_zona))].copy()
 
-        # 2) Cálculos solicitados
-        # Cumplimiento = Ordenes Totales / Target Acum
-        if 'ORDENES_TOTALES' in df2_f.columns and 'TARGET_ACUM' in df2_f.columns:
-            df2_f['CUMPLIMIENTO'] = (df2_f['ORDENES_TOTALES'] / df2_f['TARGET_ACUM'] * 100)
-        
-        # Agrupar para la tabla final
-        columnas_interes = ['PESO_PCT', 'ORDENES_TOTALES', 'TARGET_ACUM', 'CUMPLIMIENTO', 'PCT_VS_TARGET', 'SPEND_LOCAL', 'CPO_REACTIVACION', 'CPO_RESTAURANTES', 'CPO_TOTAL']
-        # Nos aseguramos de que solo sume las que existen
-        cols_presentes = [c for c in columnas_interes if c in df2_f.columns]
-        tabla_final_t2 = df2_f.groupby(['ZONA', 'SQUAD'])[cols_presentes].sum()
+        # Agrupar PRIMERO para sumar los datos, para evitar promedios rotos de porcentajes
+        # Solo sumamos columnas que sean números
+        cols_numericas = df2_f.select_dtypes(include=[np.number]).columns.tolist()
+        tabla_final_t2 = df2_f.groupby(['ZONA', 'SQUAD'])[cols_numericas].sum()
 
-        # 3) Formateo y Semáforo
-        def estilo_targets(styler):
-            # Formatos específicos
-            for col in tabla_final_t2.columns:
-                if any(x in col for x in ['PCT', 'CUMPLIMIENTO', 'TARGET']):
-                    styler.format({col: "{:,.2f}%"}) # Agregar % sin multiplicar por 100
-                if any(x in col for x in ['SPEND', 'CPO']):
-                    styler.format({col: "${:,.2f}"}) # Agregar $
+        # Calculo de cumplimiento POST-agrupación (Ordenes Reales sobre Target)
+        if 'ORDENES_TOTALES' in tabla_final_t2.columns and 'TARGET_ACUM' in tabla_final_t2.columns:
+            # Reemplazamos 0 por NaN para no dividir entre 0
+            target_seguro = tabla_final_t2['TARGET_ACUM'].replace(0, np.nan)
+            tabla_final_t2['CUMPLIMIENTO'] = (tabla_final_t2['ORDENES_TOTALES'] / target_seguro) * 100
+
+        # Mantenemos las columnas de interés que existan
+        columnas_deseadas = ['PESO_PCT', 'ORDENES_TOTALES', 'TARGET_ACUM', 'CUMPLIMIENTO', 'PCT_VS_TARGET', 'SPEND_LOCAL', 'CPO_REACTIVACION', 'CPO_RESTAURANTES', 'CPO_TOTAL']
+        cols_finales = [c for c in columnas_deseadas if c in tabla_final_t2.columns]
+        tabla_final_t2 = tabla_final_t2[cols_finales]
+
+        def estilo_targets(tabla):
+            formatos = {}
+            for col in tabla.columns:
+                if any(x in col for x in ['PCT', 'CUMPLIMIENTO']): # Aquí va el %
+                    formatos[col] = "{:,.2f}%"
+                elif any(x in col for x in ['SPEND', 'CPO']): # Aquí va el $
+                    formatos[col] = "${:,.2f}"
+                else: # El resto (Target, Ordenes Totales) va numérico normal
+                    formatos[col] = "{:,.0f}"
+                    
+            styler = tabla.style.format(formatos)
             
-            # Semáforo de Cumplimiento
-            if 'CUMPLIMIENTO' in tabla_final_t2.columns:
+            # Semáforo Antierrores
+            if 'CUMPLIMIENTO' in tabla.columns:
                 def semaforo(val):
-                    if val < 80: return 'background-color: #ffcccc; color: #990000' # Rojo (Crítico)
-                    if val < 95: return 'background-color: #fff4cc; color: #996600' # Amarillo (En proceso)
-                    return 'background-color: #ccffcc; color: #006600' # Verde (Logrado)
+                    # Si la celda está vacía o es texto, se ignora
+                    if pd.isna(val) or not isinstance(val, (int, float)): return ''
+                    if val < 80: return 'background-color: #ffcccc; color: #990000' # Rojo
+                    if val < 95: return 'background-color: #fff4cc; color: #996600' # Amarillo
+                    return 'background-color: #ccffcc; color: #006600' # Verde
                 
                 f_map = getattr(styler, "map", getattr(styler, "applymap", None))
                 if f_map: styler = f_map(semaforo, subset=['CUMPLIMIENTO'])
-            
+                
             return styler
 
         st.subheader("📋 Detalle de Metas por Zona")
-        st.dataframe(estilo_targets(tabla_final_t2.style), use_container_width=True)
+        st.dataframe(estilo_targets(tabla_final_t2), use_container_width=True)
 
-        # 4) Gráfico Comparativo
         if 'ORDENES_TOTALES' in df2_f.columns and 'TARGET_ACUM' in df2_f.columns:
             st.subheader("📊 Órdenes Reales vs Target Acumulado")
             fig_t = px.bar(
